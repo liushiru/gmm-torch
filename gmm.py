@@ -118,7 +118,7 @@ class GaussianMixture(torch.nn.Module):
         return bic
 
 
-    def fit(self, x, delta=1e-3, n_iter=100, warm_start=False):
+    def fit(self, x, delta=1e-3, n_iter=1000, warm_start=False, fix_mean=False):
         """
         Fits model to the data.
         args:
@@ -133,20 +133,21 @@ class GaussianMixture(torch.nn.Module):
 
         x = self.check_size(x)
 
-        if self.init_params == "kmeans" and self.mu_init is None:
-            mu = self.get_kmeans_mu(x, n_centers=self.n_components)
+        if self.init_params == "kmeans" and self.mu_init is None and not warm_start:
+            mu = self.get_kmeans_mu(x, n_centers=self.n_components, min_delta=0.5)
             self.mu.data = mu
 
         i = 0
         j = np.inf
 
         while (i <= n_iter) and (j >= delta):
+            # print(j, delta, i)
 
             log_likelihood_old = self.log_likelihood
             mu_old = self.mu
             var_old = self.var
 
-            self.__em(x)
+            self.__em(x, fine_tune=fix_mean)
             self.log_likelihood = self.__score(x)
 
             if torch.isinf(self.log_likelihood.abs()) or torch.isnan(self.log_likelihood):
@@ -161,7 +162,7 @@ class GaussianMixture(torch.nn.Module):
                 for p in self.parameters():
                     p.data = p.data.to(device)
                 if self.init_params == "kmeans":
-                    self.mu.data, = self.get_kmeans_mu(x, n_centers=self.n_components)
+                    self.mu.data, = self.get_kmeans_mu(x, n_centers=self.n_components, min_delta=0.01)
 
             i += 1
             j = self.log_likelihood - log_likelihood_old
@@ -332,7 +333,7 @@ class GaussianMixture(torch.nn.Module):
         return pi, mu, var
 
 
-    def __em(self, x):
+    def __em(self, x, fine_tune=False):
         """
         Performs one iteration of the expectation-maximization algorithm by calling the respective subroutines.
         args:
@@ -342,8 +343,9 @@ class GaussianMixture(torch.nn.Module):
         pi, mu, var = self._m_step(x, log_resp)
 
         self.__update_pi(pi)
-        self.__update_mu(mu)
-        self.__update_var(var)
+        if not fine_tune:
+            self.__update_mu(mu)
+            self.__update_var(var)
 
 
     def __score(self, x, as_average=True):
